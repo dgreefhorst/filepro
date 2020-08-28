@@ -1,0 +1,993 @@
+    .INCLUDE sysequ.m65		; ATASM hardware register libary (based on MAC/65 toolkit)
+    .INCLUDE iomac.lib		; ATASM IO libary
+	.OPT OBJ				; construct object code
+	.OPT LIST
+    *=  $4000   			; start address
+    JMP START  				; skip buffers
+
+KEYBV .BYTE $6c, $6a, $3b, $8a, $8b, $6b, $2b, $2a, $6f, $80, $70, $75, $9b, $69, $2d, $3d, $76, $80, $63, $8c, $8d, $62, $78, $7a, $34, $80, $33, $36, $1b, $35, $32, $31, $2c, $20, $2e, $6e, $80, $6d, $2f, $81, $72, $80, $65, $79, $7f, $74, $77, $71
+KEYBV1 .BYTE $39, $80, $30, $37, $7e, $38, $3c, $3e, $66, $68, $64, $80, $82, $67, $73, $61, $4c, $4a, $3a, $8a, $8b, $4b, $5c, $5e, $4f, $80, $50, $55, $9b, $49, $5f, $7c, $56, $80, $43, $8c, $8d, $42, $58, $5a, $24, $80, $23, $26, $1b, $25, $22, $21, 
+KEYBV2 .BYTE $5b, $20, $5d, $4e, $80, $4d, $3f, $81, $52, $80, $45, $59, $9f, $54, $57, $51, $28, $80, $29, $27, $9c, $40, $7d, $9d, $46, $48, $44, $80, $83, $47, $53, $41, $0c, $0a, $7b, $80, $80, $0b, $1e, $1f, $0f, $80, $10, $15, $9b, $09, $1c, $1d, 
+KEYBV3 .BYTE $16, $80, $03, $89, $80, $02, $18, $1a, $80, $80, $85, $80, $1b, $80, $fd, $80, $00, $20, $60, $0e, $80, $0d, $80, $81, $12, $80, $05, $19, $9e, $14, $17, $11, $80, $80, $80, $80, $fe, $80, $7d, $ff, $06, $08, $04, $80, $84, $07, $13, $01
+BUFFER .DS 256
+BUFFER2 .DS 256
+TITLE .BYTE +$80,"      FILEPRO BY DANNY GREEFHORST       "
+PROMPTTXT .BYTE "FILE# ON "
+PROMPTTXTLENGTH = *-PROMPTTXT
+PROMPTTXT2 .BYTE ", DRIVE# OR > NEXT PAGE: "
+PROMPTTXT2LENGTH = *-PROMPTTXT2
+PROMPTTXT3 .BYTE "SELECT ACTION TO PERFORM ON FILE      "
+PROMPTTXT3LENGTH = *-PROMPTTXT3
+PROMPTTXT4 .BYTE "                                      "
+PROMPTTXT4LENGTH = *-PROMPTTXT4
+PROMPTTXT5 .BYTE "FILENAME: "
+PROMPTTXT5LENGTH = *-PROMPTTXT5
+PROMPTTXT6 .BYTE "SEPARATOR:                            "
+PROMPTTXT6LENGTH = *-PROMPTTXT6
+PROMPTTXT7 .BYTE "SPACE FOR MORE, "
+PROMPTTXT7LENGTH = *-PROMPTTXT7
+PROMPTTXT8 .BYTE "> FOR NEXT OR ESC"
+PROMPTTXT8LENGTH = *-PROMPTTXT8
+PROMPTTXT9 .BYTE "ESC TO RETURN"
+PROMPTTXT9LENGTH = *-PROMPTTXT9
+ERRORTXT1 .BYTE "ERROR: FILE ALREADY EXISTS, OVERWRITE? "
+ERRORTXT1LENGTH = *-ERRORTXT1
+ERRORTXT2 .BYTE "ERROR: WRITE FAILED, PRESS ANY KEY     "
+ERRORTXT2LENGTH = *-ERRORTXT2
+ERRORTXT3 .BYTE "ERROR: HEADER LONGER THAN 254 BYTES    "
+ERRORTXT3LENGTH = *-ERRORTXT3
+ERRORTXT4 .BYTE "ERROR: RECORD LONGER THAN 254 BYTES    "
+ERRORTXT4LENGTH = *-ERRORTXT4
+ERRORTXT5 .BYTE "ERROR: NO SEPARATOR FOUND IN HEADER    "
+ERRORTXT5LENGTH = *-ERRORTXT5
+SUBMENUTXT1 .BYTE $b1, " VIEW TEXT   "
+SUBMENUTXT2 .BYTE $b2, " VIEW CSV    "
+SUBMENUTXT3 .BYTE $b3, " DELETE FILE "
+SUBMENUTXT4 .BYTE $b4, " RENAME FILE "
+SUBMENUTXT5 .BYTE $b5, " COPY FILE   "
+SUBMENUTXT6 .BYTE $b6, " CONVERT CRLF"
+SPACE .BYTE $20
+FILESPEC .BYTE "D"
+DRIVENUM .BYTE "1"
+COLON .BYTE ":"
+FILEMASK .BYTE "*.*"		; search mask for files
+PREVDRIVENUM .BYTE $30		; previous drive (starts at '0')
+FILENUM .DS 1				; file number
+FILECOUNT .DS 1				; number of files left to process
+FILENAME .DS 16				; name of file
+RENAMEFN .DS 16				; room after file name for storing new file name for renaming 
+NEWFILENAME .DS 15			; new name of file 
+KEY .DS 3					; key pressed
+SELECTEDITEM .DS 1			; number of selected item
+FILELISTINDEX .DS 1			; point in the file list
+FILELIST .DS 256			; list of files on current screen
+U .DS 1						; additional counter
+V .DS 1						; additional counter
+W .DS 1						; additional counter
+Z .DS 1						; additional counter
+CHAR .DS 1					; character
+PREVCHAR .DS 1				; previous character
+XPOS .DS 1					; X position
+YPOS .DS 1					; Y position
+ESCAPECHAR .BYTE $1B		; ATASCII ESCAPE character
+EOFFOUND .DS 1				; indicates whether EOF has been found
+LEN .DS 2					; length of input and output
+LENHEADER .DS 2				; length of CSV header
+IMPLICITEOL .DS 1			; indicates whether a new line was implicitly forced by line wrapping
+SEPARATOR .DS 1				; separator in "comma"-separated files
+SEPARATORFOUND .DS 1		; indicates whether a separator character was found
+NOMORENAMES .DS 1			; indicates whether there are no more names in the CSV header
+
+START
+	OPEN 2, 6, 0, FILESPEC	; open directory listing (CMD=6)
+	BPL OPENFILESPECOK
+	CLOSE 2
+	LDA PREVDRIVENUM
+	CMP $30
+	BEQ OPENFILESPECOK
+	STA DRIVENUM
+	OPEN 2, 6, 0, FILESPEC	; try opening previous drive	
+OPENFILESPECOK
+	LDA #0					; margin 0
+	STA $0052				; set left margin
+CONTINUE
+	OPEN 1,12,0,"E:"		; open console
+	LDA #0
+	STA 710					; set background color
+	LDA #0					; start at position 0 of filelist
+	STA FILELISTINDEX		
+	BPUT 1,TITLE,40			; print title
+	LDA #$C1				; start with file A (=ATASCII $C1)
+	STA	FILENUM
+	LDA #21					; maximum number of files to load and print on screen
+	STA FILECOUNT
+READFILENAME
+	INPUT 2,BUFFER
+	LDA #$20
+	CMP BUFFER
+	BNE NOMOREFILES
+	LDA FILENUM
+	STA BUFFER
+	PRINT 1,BUFFER
+	LDX #2					; start at position 2 of buffer
+	LDA FILELISTINDEX		; get pointer to position in file list
+	TAY
+COPYCHAR
+	LDA BUFFER,X			; read byte from buffer
+	STA FILELIST,Y			; copy the byte to the file list
+	INX
+	INY
+	CPX #13
+	BNE COPYCHAR
+	STY	FILELISTINDEX
+	INC FILENUM
+	DEC FILECOUNT
+	BNE READFILENAME
+	JMP PROMPT
+NOMOREFILES
+	PRINT 1					; print empty line
+	DEC FILECOUNT			; 1 file less to process
+	BNE NOMOREFILES			; any files left to process?
+PROMPT
+	LDA #1					; inhibit cursor
+	STA $02F0	
+	PRINT 1
+	BPUT 1,PROMPTTXT,PROMPTTXTLENGTH
+	BPUT 1,FILESPEC,2
+	BPUT 1,PROMPTTXT2,PROMPTTXT2LENGTH
+MENUSELECT
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITKEY
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITKEY
+	TAY
+ 	LDA KEYBV,Y				; loop up ATASCII code in keycode vector
+	STA KEY
+	CMP #62					; if key pressed == '>'
+	BNE D1CHECK
+	CLOSE 1
+	JMP CONTINUE
+D1CHECK
+	CMP #49					; if key pressed == '1'
+	BNE D2CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D2CHECK
+	CMP #50					; if key pressed == '2'
+	BNE D3CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D3CHECK
+	CMP #51					; if key pressed == '3'
+	BNE D4CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D4CHECK
+	CMP #52					; if key pressed == '4'
+	BNE D5CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D5CHECK
+	CMP #53					; if key pressed == '5'
+	BNE D6CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D6CHECK
+	CMP #54					; if key pressed == '6'
+	BNE D7CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D7CHECK
+	CMP #55					; if key pressed == '7'
+	BNE D8CHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+D8CHECK
+	CMP #56					; if key pressed == '8'
+	BNE RANGECHECK
+	LDX DRIVENUM
+	STX PREVDRIVENUM
+	STA DRIVENUM
+	JMP RESTART
+RANGECHECK	
+	SEC
+	SBC #97					
+	STA SELECTEDITEM
+	BMI MENUSELECTJMP		; key pressed has ATASCII value lower than that of A (65)
+	LDA KEY
+	ADC #95				
+	SEC
+	SBC FILENUM
+	BPL MENUSELECTJMP		; key pressed has ATASCII value higher than that of last file number given
+	LDA #0					; start from zero position of file list
+	LDX SELECTEDITEM
+FORWARDINFILELIST
+	CPX #0
+	BEQ COPYFN
+	CLC
+	ADC #11
+	DEX
+	JMP FORWARDINFILELIST
+COPYFN
+	TAY						; y = start position in file list of file name
+	LDX	#0					; start at position 0 in file name
+	STX Z					; z = number of characters processed
+	LDA	FILESPEC			; device name
+	STA FILENAME,X			; store device name in file name
+	INX
+	LDA DRIVENUM			; drive number
+	STA FILENAME,X			; store drive number in fila name
+	INX
+	LDA #$3a				; colon
+	STA FILENAME,X			; store colon in file name
+	INX
+READCHARFROMFILELIST
+	LDA FILELIST,Y			; read character from file list
+	INY						; move one additional character position forward
+	INC Z					; one additional character processed
+CHECKSEPARATOR
+	PHA						; save character read in accumulator
+	LDA Z					; check how many characters are read
+	CMP #9					; check whether a separator (".") needs to be inserted
+	BNE NOSEPARATOR
+ADDSEPARATOR
+	LDA #$2e				; '.'
+	STA FILENAME,X			; store dot in file name
+	INX						; next character
+NOSEPARATOR	
+	PLA
+	CMP #$20				; space
+	BEQ CHECKLASTCHAR		; if equal to space then read next character
+	STA FILENAME,X			; otherwise store chacter in buffer
+	INX						; next character
+CHECKLASTCHAR
+	LDA Z
+	CMP #11					; check if we are at last character in file name
+	BNE READCHARFROMFILELIST
+	LDA #$9B				; EOL
+	STA FILENAME,X			; end file name with EOL
+	STX Z					; index of EOL in file name - used for renaming
+	CLOSE 2
+	JMP SUBMENU
+MENUSELECTJMP
+	JMP MENUSELECT
+RESTART
+	CLOSE 2
+	CLOSE 1
+	JMP START
+
+SUBMENU
+	LDA #20
+	STA $55
+	LDA #2
+	STA $54
+	BPUT 1,SUBMENUTXT1,14
+	LDA #20
+	STA $55
+	LDA #3
+	STA $54
+	BPUT 1,SUBMENUTXT2,14
+	LDA #20
+	STA $55
+	LDA #4
+	STA $54
+	BPUT 1,SUBMENUTXT3,14
+	LDA #20
+	STA $55
+	LDA #5
+	STA $54
+	BPUT 1,SUBMENUTXT4,14
+	LDA #20
+	STA $55
+	LDA #6
+	STA $54
+	BPUT 1,SUBMENUTXT5,14
+	LDA #20
+	STA $55
+	LDA #7
+	STA $54
+	BPUT 1,SUBMENUTXT6,14
+	LDA #0
+	STA $55
+	LDA #24
+	STA $54
+	BPUT 1,PROMPTTXT3,PROMPTTXT3LENGTH
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITKEYSUBMENU
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITKEYSUBMENU
+	TAY
+ 	LDA KEYBV,Y				; loop up ATASCII code in keycode vector
+	STA KEY
+SUBMENU1CHECK
+	CMP #49					; if key pressed == '1'
+	BNE SUBMENU2CHECK
+	CLOSE 1
+	JMP VIEWTEXT
+SUBMENU2CHECK
+	CMP #50					; if key pressed == '2'
+	BNE SUBMENU3CHECK
+	JMP VIEWCSV
+SUBMENU3CHECK
+	CMP #51					; if key pressed == '3'
+	BNE SUBMENU4CHECK
+	JMP DELETEFILE
+SUBMENU4CHECK
+	CMP #52					; if key pressed == '4'
+	BNE SUBMENU5CHECK
+	JMP RENAMEFILE
+SUBMENU5CHECK
+	CMP #53					; if key pressed == '5'
+	BNE SUBMENU6CHECK
+	JMP COPYFILE
+SUBMENU6CHECK
+	CMP #54					; if key pressed == '5'
+	BNE EXITSUBMENU
+	JMP CONVERTFROMCRLF
+EXITSUBMENU
+	JMP RESTART
+
+INPUTFN
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,PROMPTTXT4,PROMPTTXT4LENGTH
+	LDA #20
+	STA $55
+	LDA #21
+	STA $54
+	BPUT 1,PROMPTTXT5,PROMPTTXT5LENGTH
+	LDA #0					; show cursor
+	STA $02F0
+	LDA #19
+	STA $55
+	LDA #22
+	STA $54
+	BPUT 1,SPACE,1
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+	INPUT 1,NEWFILENAME,16
+	LDA #1					; inhibit cursor
+	STA $02F0		
+BUILDNEWFN
+	LDX #1					; check position 1 
+	LDA NEWFILENAME,X		; of file name
+	CMP #$3A				; if colon found 
+	BEQ CHECKFILEEXISTS		; then return from subroutine
+	INX
+	LDA NEWFILENAME,X
+	CMP #$3A				; if colon found 
+	BEQ CHECKFILEEXISTS		; then return from subroutine
+	LDY #12
+	LDX #15
+SHIFTFN
+	LDA NEWFILENAME,Y
+	STA NEWFILENAME,X
+	DEX
+	DEY
+	BPL SHIFTFN
+	LDX #0
+	LDA FILESPEC			
+	STA NEWFILENAME,X		; store device name in file name
+	LDA	DRIVENUM			
+	INX						; at position 1 of file name
+	STA NEWFILENAME,X		; store drive number
+	INX
+	LDA #$3A				; colon
+	STA NEWFILENAME,X		; add colon to drive name
+CHECKFILEEXISTS
+	OPEN 3, 4, 0, NEWFILENAME ; open file for reading (CMD=4)
+	BPL FILEALREADYEXISTS
+	CLOSE 3
+	JMP SUCCESSNEWFILE
+FILEALREADYEXISTS
+	CLOSE 3
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,ERRORTXT1,ERRORTXT1LENGTH
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITOVERWRITE
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITOVERWRITE
+	TAY
+ 	LDA KEYBV,Y				; loop up ATASCII code in keycode vector 
+	STA KEY
+	CMP #121				; if key pressed == 'y'
+	BNE NOOVERWRITECHECK
+	XIO 33, 2, NEWFILENAME	; delete file
+	BPL SUCCESSNEWFILE
+	JMP FAILNEWFILE
+NOOVERWRITECHECK
+	CMP #110				; if key pressed == 'n'
+	BEQ FAILNEWFILE
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+	JMP WAITOVERWRITE
+SUCCESSNEWFILE
+	LDY #0
+	RTS
+FAILNEWFILE
+	LDY #1
+	RTS
+
+VIEWTEXT
+	OPEN 2, 4, 0, FILENAME	; open file for reading (CMD=4)
+	LDA #0					; margin 0
+	STA $0052				; set left margin
+	STA EOFFOUND			; set EOF found to false
+CONTINUEVIEWTEXT
+	OPEN 1,12,0,"E:"		; open console
+	LDA #0
+	STA 710					; set background color
+	LDA #1					; inhibit cursor
+	STA $02F0	
+	LDA #0
+	STA XPOS
+	STA YPOS
+	STA IMPLICITEOL
+READCHAR
+	BGET 2,CHAR,1
+	TYA
+	BMI EOF
+	LDA CHAR
+	JMP CHECKESCAPE
+EOF
+	LDA #1
+	STA EOFFOUND
+	JMP STARTWAIT
+CHECKESCAPE					; check for characters that need to be escaped in the output
+	CMP #$1B
+	BEQ ESCAPE
+	CMP #$1C
+	BEQ ESCAPE
+	CMP #$1D
+	BEQ ESCAPE
+	CMP #$1E
+	BEQ ESCAPE
+	CMP #$1F
+	BEQ ESCAPE
+	CMP #$7D
+	BEQ ESCAPE
+	CMP #$7E
+	BEQ ESCAPE
+	CMP #$7F
+	BEQ ESCAPE
+	CMP #$9C
+	BEQ ESCAPE
+	CMP #$9D
+	BEQ ESCAPE
+	CMP #$9E
+	BEQ ESCAPE
+	CMP #$9F
+	BEQ ESCAPE
+	CMP #$FD
+	BEQ ESCAPE
+	CMP #$FE
+	BEQ ESCAPE
+	CMP #$FF
+	JMP CHECKEOLSKIP
+ESCAPE
+	BPUT 1,ESCAPECHAR,1
+CHECKEOLSKIP
+	LDA CHAR
+	CMP #$9B
+	BNE PRINTCHAR
+	LDA YPOS
+	CMP #23
+	BEQ AFTERPRINTCHAR
+	LDA IMPLICITEOL
+	CMP #1
+	BEQ AFTERPRINTCHAR
+PRINTCHAR
+	BPUT 1,CHAR,1
+AFTERPRINTCHAR
+	LDA CHAR
+	CMP #$9B
+	BEQ EOLFOUND
+	LDA XPOS
+	CMP #39
+	BNE SAMELINE
+	LDA #1
+	STA IMPLICITEOL
+EOLFOUND
+	LDA #0
+	STA XPOS
+	LDA IMPLICITEOL
+	CMP #1
+	BNE INCYPOS
+	LDA CHAR
+	CMP #$9B
+	BEQ AFTERINCYPOS
+INCYPOS	
+	INC YPOS
+AFTERINCYPOS
+	LDA YPOS
+	CMP #24
+	BEQ STARTWAIT
+	JMP READCHAR
+SAMELINE
+	LDA #0
+	STA IMPLICITEOL
+	INC XPOS
+	LDA XPOS
+	CMP #39
+	BNE JMPREADCHAR
+	LDA YPOS
+	CMP #23
+	BEQ STARTWAIT
+JMPREADCHAR
+	JMP READCHAR
+STARTWAIT
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITKEYPRESS 
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITKEYPRESS
+	TAY
+ 	LDA KEYBV,Y				; loop up ATASCII code in keycode vector
+	CMP #$1B				; check ESC key
+	BEQ ENDVIEWTEXT
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+	LDA EOFFOUND
+	CMP #1
+	BEQ ENDVIEWTEXT
+	CLOSE 1
+	JMP CONTINUEVIEWTEXT
+ENDVIEWTEXT
+	CLOSE 2
+	CLOSE 1
+	JMP START
+
+VIEWCSV
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,PROMPTTXT6,PROMPTTXT6LENGTH
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITSEPARATORKEY
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITSEPARATORKEY
+	TAY
+ 	LDA KEYBV,Y				; loop up ATASCII code in keycode vector
+	STA SEPARATOR
+	OPEN 2, 4, 0, FILENAME	; open file for reading (CMD=4)
+	INPUT 2, BUFFER, 255	; read header
+	LDX #$20				; IOCB 2
+	LDA ICBLEN,X			; number of bytes actually read
+	STA LENHEADER			; save
+	CMP #255				; if maximum has been reached
+	BNE NOERRORHEADERLENGTH ; then generate error that length of header is too long
+	JMP ERRORHEADERLENGTH
+NOERRORHEADERLENGTH	
+	LDA ICBLEN+1,X			; high byte
+	STA LENHEADER+1			; save
+	LDA #0					; margin 0
+	STA $0052				; set left margin
+	STA EOFFOUND			; set EOF found to false
+CONTINUEVIEWCSV
+	CLOSE 1					; close console
+	OPEN 1,12,0,"E:"		; open console
+	LDA #0
+	STA 710					; set background color
+	LDA #1					; inhibit cursor
+	STA $02F0	
+INITVARIABLES
+	LDA #0
+	STA XPOS
+	STA YPOS
+	STA Z					; index into buffer of names
+	STA U					; index into buffer of values
+	STA W 					; counter of number of characters printed in loop	
+	STA SEPARATORFOUND		; indicated that no separator has been found yet
+READNEXTCSVLINE
+	LDA #0
+	STA NOMORENAMES			; indicates that there are names to process for this CSV line / record
+	INPUT 2, BUFFER2, 255
+	LDX #$20				; IOCB 2
+	LDA ICBLEN,X			; number of bytes actually read
+	STA LEN					; save
+	CMP #255				; if maximum has been reached
+	BNE NOERRORRECORDLENGTH	; then generate error that length of record is too long
+	JMP ERRORRECORDLENGTH
+NOERRORRECORDLENGTH
+	LDA ICBLEN+1,X			; high byte
+	STA LEN+1				; save
+	TYA
+	BPL PRINTNAME
+	LDA #1
+	STA EOFFOUND
+PRINTNAME
+	LDX Z
+	LDA BUFFER,X
+	STA CHAR
+	CMP SEPARATOR
+	BNE CHECKEOLINNAME
+	INC SEPARATORFOUND
+	INC Z
+	JMP PRINTCOLON
+CHECKEOLINNAME
+	CMP #$9B
+	BNE NOEOLINNAME
+	LDA #1
+	STA NOMORENAMES
+	JMP CHECKSEPARATORINNAMES
+NOEOLINNAME
+	LDA W
+	SEC
+	SBC #10					
+	BPL CHECKNAMESLENGTH
+PRINTNAMECHAR	
+	BPUT 1, CHAR, 1
+CHECKNAMESLENGTH
+	INC Z
+	INC W
+	LDA Z
+	CMP LENHEADER
+	BNE PRINTNAME
+	LDA #1
+	STA NOMORENAMES
+CHECKSEPARATORINNAMES
+	LDA SEPARATORFOUND
+	CMP #0
+	BNE PRINTCOLON
+	JMP ERRORNOSEPARATOR
+PRINTCOLON
+	LDA #10
+	STA $55
+	LDA YPOS
+	STA $54
+	BPUT 1,COLON,1
+	BPUT 1,SPACE,1
+	LDA #0
+	STA W
+PRINTVALUE
+	LDX U 
+	LDA BUFFER2,X
+	STA CHAR
+	CMP SEPARATOR
+	BNE CHECKEOLINVALUE
+	INC U
+	JMP AFTERPRINTVALUE
+CHECKEOLINVALUE
+	CMP #$9B
+	BEQ AFTERPRINTVALUE
+	LDA W
+	SEC
+	SBC #28					
+	BPL AFTERPRINTVALUECHAR
+PRINTVALUECHAR	
+	BPUT 1, CHAR, 1
+AFTERPRINTVALUECHAR
+	INC U
+	INC W
+	LDA U
+	CMP LEN
+	BNE PRINTVALUE
+AFTERPRINTVALUE
+	LDA NOMORENAMES
+	CMP #1 
+	BEQ PROMPTCSVACTION
+	INC YPOS
+	LDA YPOS
+	CMP #22
+	BEQ PROMPTCSVACTION
+	LDA #0
+	STA $55
+	LDA YPOS
+	STA $54
+	LDA #0
+	STA W
+	JMP PRINTNAME			; more name-value pairs to process on this screen	
+PROMPTCSVACTION
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	LDA NOMORENAMES
+	CMP #0
+	BNE PROMPTCSVACTION2
+	BPUT 1,PROMPTTXT7,PROMPTTXT7LENGTH
+PROMPTCSVACTION2
+	LDA EOFFOUND
+	CMP #0
+	BNE PROMPTCSVACTION3
+	BPUT 1,PROMPTTXT8,PROMPTTXT8LENGTH
+	JMP PREPWAITCSVACTIONKEY
+PROMPTCSVACTION3
+	BPUT 1,PROMPTTXT9,PROMPTTXT9LENGTH
+PREPWAITCSVACTIONKEY
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITCSVACTIONKEY
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITCSVACTIONKEY
+	TAY
+ 	LDA KEYBV,Y				; loop up ATASCII code in keycode vector
+	STA KEY
+	CMP #62					; if key pressed == '>'
+	BNE SPACECHECK
+	LDA EOFFOUND
+	CMP #0
+	BNE SPACECHECK
+	JMP CONTINUEVIEWCSV 
+SPACECHECK
+	CMP #32					; if key pressed == ' '
+	BNE ESCCHECK
+	LDA NOMORENAMES
+	CMP #0
+	BNE ESCCHECK
+	CLOSE 1					; close console
+	OPEN 1,12,0,"E:"		; open console
+	LDA #0
+	STA 710					; set background color
+	LDA #1					; inhibit cursor
+	STA $02F0		
+	JMP PRINTNAME 
+ESCCHECK	
+	CMP #$1B				; if key pressed == ESC
+	BNE WAITCSVACTIONKEY
+	JMP ENDVIEWCSV
+ERRORHEADERLENGTH
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,ERRORTXT3,ERRORTXT3LENGTH
+	JMP CSVERRORWAIT
+ERRORRECORDLENGTH
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,ERRORTXT4,ERRORTXT4LENGTH
+	JMP CSVERRORWAIT
+ERRORNOSEPARATOR
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,ERRORTXT5,ERRORTXT5LENGTH
+CSVERRORWAIT
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+CSVERRORWAITKEY
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ CSVERRORWAITKEY
+ENDVIEWCSV
+	CLOSE 2
+	CLOSE 1
+	JMP START
+
+DELETEFILE
+	XIO 33, 2, FILENAME		; delete file
+	CLOSE 1					; close console
+	JMP START
+
+RENAMEFILE
+	JSR INPUTFN
+	CPY #1
+	BEQ ENDRENAMEFILE
+	LDX Z					; x = index into filename of EOL
+	LDY #3					; y = 0 = start of new filename
+	LDA #$2c				; comma
+	STA FILENAME,x			; replace EOL with comma in filename
+	INX
+COPYCHARTONEWFN
+	LDA NEWFILENAME,y
+	STA FILENAME,x
+	INY
+	INX
+	CMP #$9B
+	BNE COPYCHARTONEWFN
+	XIO 32, 2, FILENAME		; rename file
+ENDRENAMEFILE
+	CLOSE 1					; close console
+	JMP START
+
+COPYFILE
+	JSR INPUTFN
+	CPY #0
+	BEQ OPENFILESFORCOPY
+	JMP ENDCOPYFILE
+OPENFILESFORCOPY
+	OPEN 2, 4, 0, FILENAME	; open source file for reading (CMD=4)
+	OPEN 3, 8, 0, NEWFILENAME ; open target file for writing (CMD=8)
+	LDA #0					
+	STA EOFFOUND			; no EOF yet
+COPYBLOCK
+	BGET 2, BUFFER, 255
+	LDX #$20				; IOCB 3
+	LDA ICBLEN,X			; number of bytes actually read
+	STA LEN					; save
+	LDA ICBLEN+1,X			; high byte
+	STA LEN+1				; save
+	TYA
+	BPL NOEOFYET
+	LDA #1
+	STA EOFFOUND
+NOEOFYET	
+	LDX #3*16				; IOCB 3
+	LDA #CPBINR				; put binary record
+	STA ICCOM,X
+	LDA # <BUFFER
+	STA ICBADR,X
+	LDA # >BUFFER
+	STA ICBADR+1,X
+	LDA LEN
+	STA ICBLEN,X
+	LDA LEN+1
+	STA ICBLEN+1,X
+	JSR CIO
+	BPL WRITEOK
+	JMP ERRORCOPYFILE
+WRITEOK
+	LDA EOFFOUND
+	CMP #0
+	BEQ COPYBLOCK
+	CLOSE 2					; close source file
+	CLOSE 3					; close target file
+ENDCOPYFILE
+	CLOSE 1					; close console
+	JMP START
+ERRORCOPYFILE
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,ERRORTXT2,ERRORTXT2LENGTH
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITKEYWRITEFAIL
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITKEYWRITEFAIL
+	CLOSE 2
+	CLOSE 3
+	CLOSE 1					; close console
+	JMP START
+	
+CONVERTFROMCRLF	
+	JSR INPUTFN
+	CPY #0
+	BEQ OPENFILESCRLF
+	JMP ENDCONVERTCRLF
+OPENFILESCRLF
+	OPEN 2, 4, 0, FILENAME	; open source file for reading (CMD=4)
+	OPEN 3, 8, 0, NEWFILENAME ; open target file for writing (CMD=8)
+	LDA #0				
+	STA EOFFOUND			; no EOF yet
+	STA PREVCHAR
+GETBLOCK
+	BGET 2, BUFFER, 255
+	LDX #$20				; IOCB 2
+	LDA ICBLEN,X			; number of bytes actually read
+	STA LEN					; save
+;	LDA ICBLEN+1,X			; high byte
+;	STA LEN+1				; save
+	TYA
+	BPL NOEOFYETCRLF
+	LDA #1
+	STA EOFFOUND
+NOEOFYETCRLF
+	LDY #0
+	LDX #0
+NEXTCHARCRLF
+	LDA BUFFER,X
+	INX
+	STA CHAR				; save character
+	CMP #$0A				; LF
+	BNE NOLF
+	LDA PREVCHAR 			; in case LF is found look at previous character
+	CMP #$0D				; CR
+	BNE STORECHAR
+	LDA #$9B				; EOL to replace CR and LF
+	STA BUFFER2,Y
+	STA PREVCHAR
+	INY
+	JMP CHECKENDBUFFER
+NOLF
+	LDA CHAR 
+	CMP #$0D				; CR
+	BNE NOCR
+	STA PREVCHAR
+	JMP CHECKENDBUFFER
+NOCR
+	LDA PREVCHAR
+	CMP #$0D				; CR
+	BNE STORECHAR
+	STA BUFFER2,Y
+	INY
+STORECHAR	
+	LDA CHAR
+	STA BUFFER2,Y
+	STA PREVCHAR
+	INY
+CHECKENDBUFFER
+	CPX LEN				; when 255 bytes have been read
+	BNE NEXTCHARCRLF
+	LDA EOFFOUND				
+	CMP #1
+	BNE WRITEBUFFER
+	LDA PREVCHAR
+	CMP #$0D				; CR
+	BNE WRITEBUFFER
+	STA BUFFER2,Y
+	INY
+WRITEBUFFER
+	LDX #3*16				; IOCB 3
+	LDA #CPBINR				; put binary record
+	STA ICCOM,X
+	LDA # <BUFFER2
+	STA ICBADR,X
+	LDA # >BUFFER2
+	STA ICBADR+1,X
+	TYA						; length of record = index in out buffer	
+	STA ICBLEN,X
+	LDA #0					; record size < 256, no high byte
+	STA ICBLEN+1,X
+	JSR CIO
+	BPL WRITEOKCRLF
+	JMP ERRORCONVERTCRLF
+WRITEOKCRLF
+	LDA EOFFOUND
+	CMP #0
+	BNE CLOSEFILES
+	JMP GETBLOCK
+CLOSEFILES
+	CLOSE 2					; close source file
+	CLOSE 3					; close target file
+ENDCONVERTCRLF
+	CLOSE 1					; close console
+	JMP START
+ERRORCONVERTCRLF
+	LDA #0
+	STA $55
+	LDA #23
+	STA $54
+	BPUT 1,ERRORTXT2,ERRORTXT2LENGTH
+    LDA #$FF
+    STA $02FC 				; last key pressed - no key pressed
+WAITKEYWRITEFAILCRLF
+    LDA $02FC 				; determine last key pressed
+    CMP #$FF
+    BEQ WAITKEYWRITEFAILCRLF
+	CLOSE 2
+	CLOSE 3
+	CLOSE 1					; close console
+	JMP START
+	
+	.END
+
+    *= $2e0
+    .WORD START
+	
